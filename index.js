@@ -49,7 +49,7 @@ var saveCache = function(cache){
 
 
 var download = function(url,folder,filename){
-
+	
 	return new Promise((resolve,reject)=>{
 	
 		var youtubedl = require('youtube-dl');
@@ -61,14 +61,17 @@ var download = function(url,folder,filename){
 
 		// Will be called when the download starts.
 		video.on('info', function(info) {
-		
+
 			filename = filename || info._filename;
 			folder = folder || "Unsorted";
 			
-			var p = path.join(__dirname,"music",folder);
+			var p = path.join(__dirname,"music");
 			fs.mkdir(p,function(){
-				p = path.join(p,filename);
-				video.pipe(fs.createWriteStream(p));
+				p = path.join(p,folder);
+				fs.mkdir(p,function(){
+					p = path.join(p,filename);
+					video.pipe(fs.createWriteStream(p));
+				});
 			});
 			
 		});
@@ -108,11 +111,17 @@ var getChannelVideos = function(channel){
 					cache.channels = cache.channels || {};
 					cache.channels[channel] = cache.channels[channel] || [];
 					if(cache.channels[channel].indexOf(v.id.videoId) == -1){
-						cache.channels[channel].push(v.id.videoId);
-						saveCache(cache).then(()=>{
-							var url = 'https://www.youtube.com/watch?v='+v.id.videoId;
-							resolve(download(url,v.snippet.channelTitle));
+						
+						var url = 'https://www.youtube.com/watch?v='+v.id.videoId;
+						download(url,v.snippet.channelTitle).then(() => {
+							
+							cache.channels[channel].push(v.id.videoId);
+							saveCache(cache).then(()=>{
+								resolve();
+							});
+							
 						});
+						
 					} else {
 						resolve();
 					}
