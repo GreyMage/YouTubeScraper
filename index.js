@@ -70,6 +70,7 @@ var download = function(url,folder,filename){
 				p = path.join(p,folder);
 				fs.mkdir(p,function(){
 					p = path.join(p,filename);
+					console.log("Saving",folder,filename);
 					video.pipe(fs.createWriteStream(p));
 				});
 			});
