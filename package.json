@@ -13,7 +13,12 @@
     "youtube-dl": "^1.11.1"
   },
   "channels": [
+	"UCF6-fdubXkcpELOB5sUbrWw",
+	"UCIKF1msqN7lW9gplsifOPkQ",
+	"UCBYg9_11ErMsFFNR66TRuLA",
+	"UCLTZddgA_La9H4Ngg99t_QQ",
 	"UCTPjZ7UC8NgcZI8UKzb3rLw",
-	"UC5nc_ZtjKW1htCVZVRxlQAQ"
+	"UC5nc_ZtjKW1htCVZVRxlQAQ",
+	"UCKwElNgRUA5wj-NWKcmm3lQ"
   ]
 }
