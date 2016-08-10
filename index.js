@@ -96,7 +96,7 @@ var download = function(url,folder,filename){
 
 var buildChannelRequest = function(channel,moreparams){
 	
-	console.log("buildChannelRequest",arguments);
+	//console.log("buildChannelRequest",arguments);
 	
 	var base = 'https://www.googleapis.com/youtube/v3/search?';
 	var params = {};
@@ -116,7 +116,7 @@ var getChannelVideos = function(channel){
 
 	return new Promise((resolve,reject)=>{
 		var url = buildChannelRequest(channel);
-		console.log(url);
+		//console.log(url);
 
 		var parseIndividualVideo = function(v){
 			
@@ -126,6 +126,7 @@ var getChannelVideos = function(channel){
 					cache.channels = cache.channels || {};
 					cache.channels[channel] = cache.channels[channel] || [];
 					
+					// Already exists?
 					let found = false;
 					cache.channels[channel].forEach( (el,i,arr) => {
 						if(found) return;
@@ -133,6 +134,12 @@ var getChannelVideos = function(channel){
 					});
 					if(found) return;
 					
+					// Is video?
+					if('youtube#video' != v.id.kind){
+						return resolve();
+					}
+						
+					// Download
 					var url = 'https://www.youtube.com/watch?v='+v.id.videoId;
 					
 					download(url,v.snippet.channelTitle).then((data) => {
@@ -194,27 +201,47 @@ let tooOld = age => {
 	return (age > max);
 }
 
+let removeMedia = (media) => {
+	return new Promise((resolve,reject)=>{
+		let p = path.join(__dirname,"music",media.dir,media.file);
+		fs.unlink(p, err =>{
+			if(err)reject(err);
+			else resolve();
+		});
+	})
+}
+
 let pruneOldVideos = () => {
 	return new Promise( (resolve,reject) => {
 		getCache().then(cache => {
-			for(let x in cache.channels){
-				let channel = cache.channels[x];
+			for(let chanid in cache.channels){
+				let channel = cache.channels[chanid];
 				for(let x in channel){
 					let media = channel[x];
 					media.date = media.date || (+new Date);
 					let age = (+new Date) - media.date;
-					console.log(age);
+					//console.log(age);
 					if(tooOld(age)){
-						console.log("dieeeee");
+						//console.log("removed",media);
+						removeMedia(media).then(()=>{
+							let i = cache.channels[chanid].indexOf(media);
+							cache.channels[chanid].splice(i,1);
+						},err=>{
+							console.log("Unable to prune media, will try later.",media);
+						});					
 					}
 				}
 			}
-			resolve();
+			//console.log(cache);
+			saveCache(cache).then(()=>{
+				resolve();
+			});
 		});
 	});
 };
 
 //var channels = ['UCTPjZ7UC8NgcZI8UKzb3rLw'];
+
 var channels = pkg.channels || [];
 parseChannels(channels)
 .then(()=>{
