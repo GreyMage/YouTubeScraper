@@ -9,7 +9,7 @@ const pkg = require('./package.json');
 var cachepath = './cache.json';
 
 var getCache = function(){
-	return new Promise((resolve,reject) => {
+	var loadFromFile = new Promise((resolve,reject) => {
 		var def = {};
 		fs.readFile(cachepath, (err, data) => {
 			if (err) {
@@ -35,6 +35,15 @@ var getCache = function(){
 			}
 		});
 	});
+	
+	return new Promise(done=>{
+		loadFromFile.then(cache => {
+			// Middle layer
+			cache.downloaded = cache.downloaded || {};
+			done(cache);
+		})
+	})
+	
 }
 
 var saveCache = function(cache){
@@ -95,9 +104,7 @@ var download = function(url,folder,filename){
 }
 
 var buildChannelRequest = function(channel,moreparams){
-	
-	//console.log("buildChannelRequest",arguments);
-	
+		
 	var base = 'https://www.googleapis.com/youtube/v3/search?';
 	var params = {};
 	
@@ -112,52 +119,94 @@ var buildChannelRequest = function(channel,moreparams){
 	
 }
 
+// AKA the "should we have this" module
+var videoGauntlet = function(v,ignorecache){
+	
+	return new Promise((resolve,reject) => {
+		
+		getCache().then(cache => {
+						
+			if(!ignorecache){
+				// Cached?
+				if(cache.downloaded[v.id.videoId]){
+					//console.log("Cached, skip.")
+					return reject();
+				}
+			}
+			
+			// Only allow the freshest beats
+			var pub = new Date(v.snippet.publishedAt).getTime();
+			var now = new Date().getTime();
+			var age = (now - pub) / (1000 * 60 * 60 * 24); //days
+			if(age > 14) {
+				//console.log("Too old, skip.");
+				return reject();
+			}
+			
+			//Is video?
+			if('youtube#video' != v.id.kind){
+				//console.log("Not a video, skip.")
+				return reject();
+			}
+			
+			// OK!			
+			return resolve();
+			
+		}).catch(e=>{
+			console.error(e);
+		});
+		
+	});
+	
+}
+
+var downloadAndSave = function(v){
+	
+	return new Promise((resolve,reject)=>{
+		getCache().then(cache => {
+			var url = 'https://www.youtube.com/watch?v='+v.id.videoId;
+			
+			download(url,v.snippet.channelTitle).then((data) => {
+				
+				let finalfolder = data.finalfolder;
+				let finalfile = data.finalfile;
+				
+				let obj = {
+					v:v,
+					date:+new Date(),
+					dir:finalfolder,
+					file:finalfile,
+				}
+				
+				cache.downloaded[v.id.videoId] = obj;
+				saveCache(cache).then(()=>{
+					resolve();
+				});
+				
+			}).catch(e=>{
+				console.error(e);
+			});
+		});
+	})
+	
+}
+
 var getChannelVideos = function(channel){
 
 	return new Promise((resolve,reject)=>{
-		var url = buildChannelRequest(channel);
-		//console.log(url);
-
+		
 		var parseIndividualVideo = function(v){
-			
 			return new Promise((resolve,reject)=>{
-				getCache().then(cache => {
-			
-					cache.channels = cache.channels || {};
-					cache.channels[channel] = cache.channels[channel] || [];
+				videoGauntlet(v).then(()=>{
+					// Video needs to be downloaded.
+					downloadAndSave(v).then(resolve);
+				},()=>{
+					// Video can be skipped.
+					resolve();
+				})					
 					
-					// Already exists?
-					let found = false;
-					cache.channels[channel].forEach( (el,i,arr) => {
-						if(found) return;
-						if(el.id == v.id.videoId) { found = true; resolve(); }
-					});
-					if(found) return;
-					
-					// Is video?
-					if('youtube#video' != v.id.kind){
-						return resolve();
-					}
-						
-					// Download
-					var url = 'https://www.youtube.com/watch?v='+v.id.videoId;
-					
-					download(url,v.snippet.channelTitle).then((data) => {
-						
-						let finalfolder = data.finalfolder;
-						let finalfile = data.finalfile;
-						
-						cache.channels[channel].push({id:v.id.videoId,date:+new Date(),dir:finalfolder,file:finalfile});
-						saveCache(cache).then(()=>{
-							resolve();
-						});
-						
-					});
-
-				});
 			});
-
-		};
+		}
 		
 		var parseVideos = function(list){
 			return new Promise(resolve => {
@@ -168,6 +217,7 @@ var getChannelVideos = function(channel){
 			});
 		}
 		
+		var url = buildChannelRequest(channel);
 		https.get(url, (res) => {
 			
 			var buffer = '';
@@ -204,6 +254,7 @@ let tooOld = age => {
 let removeMedia = (media) => {
 	return new Promise((resolve,reject)=>{
 		let p = path.join(__dirname,"music",media.dir,media.file);
+		return resolve(); // skip
 		fs.unlink(p, err =>{
 			if(err)reject(err);
 			else resolve();
@@ -212,32 +263,55 @@ let removeMedia = (media) => {
 }
 
 let pruneOldVideos = () => {
-	return new Promise( (resolve,reject) => {
+	let main = new Promise( (resolve,reject) => {
 		getCache().then(cache => {
-			for(let chanid in cache.channels){
-				let channel = cache.channels[chanid];
-				for(let x in channel){
-					let media = channel[x];
-					media.date = media.date || (+new Date);
-					let age = (+new Date) - media.date;
-					//console.log(age);
-					if(tooOld(age)){
-						//console.log("removed",media);
-						removeMedia(media).then(()=>{
-							let i = cache.channels[chanid].indexOf(media);
-							cache.channels[chanid].splice(i,1);
-						},err=>{
-							console.log("Unable to prune media, will try later.",media);
-						});					
-					}
-				}
+			
+			let splicers = [];
+			let queue = Promise.resolve();
+			for(let i in cache.downloaded){
+				const el = cache.downloaded[i];
+				queue = queue.then(()=>{
+					return videoGauntlet(el.v,true).then(()=>{
+						// Keep
+					},()=>{
+						// Drop
+						splicers.push(el);
+					})
+				})
 			}
-			//console.log(cache);
-			saveCache(cache).then(()=>{
-				resolve();
+			
+			queue = queue.then(()=>{
+				return new Promise(done=>{
+					// remove all "dones"
+					for( let i in splicers ){
+						let media = splicers[i];
+						queue = queue.then(()=>{
+							return removeMedia(splicers[i]).then(()=>{
+								let id = media.v.id.videoId;
+								delete cache.downloaded[id];
+							},err=>{
+								console.log("Unable to prune media, will try later.",media);
+							});
+						})
+					}
+					
+					queue = queue.then(()=>{
+						saveCache(cache).then(()=>{
+							resolve();
+						});
+					});
+					
+					done();
+				});
 			});
+			
+			queue.catch(e=>{
+				console.error(e);
+			});
+			
 		});
-	});
+	}); 
+	
 };
 
 //var channels = ['UCTPjZ7UC8NgcZI8UKzb3rLw'];
